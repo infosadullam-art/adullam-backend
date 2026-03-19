@@ -17,8 +17,8 @@ RUN npx prisma generate
 # Copie du reste du code
 COPY . .
 
-# Build avec logs détaillés
-RUN npm run build --verbose || (echo "=== BUILD FAILED ===" && cat /root/.npm/_logs/*-debug-0.log && exit 1)
+# Build avec logs détaillés et sauvegarde
+RUN npm run build --verbose 2>&1 | tee build.log || (echo "=== BUILD FAILED ===" && cat build.log && exit 1)
 
 # Exposition du port
 EXPOSE 3000
