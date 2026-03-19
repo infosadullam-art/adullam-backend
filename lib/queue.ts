@@ -1,11 +1,15 @@
 import { Queue, Worker, Job } from "bullmq"
 
-// Configuration Redis pour BullMQ
+// Configuration Redis pour BullMQ - UTILISE LES VARIABLES D'ENVIRONNEMENT
 const connectionOptions = {
-  host: "127.0.0.1",
-  port: 6379,
-  // password: process.env.REDIS_PASSWORD, // décommente si nécessaire
+  host: process.env.REDIS_HOST || "127.0.0.1",
+  port: parseInt(process.env.REDIS_PORT || "6379"),
+  password: process.env.REDIS_PASSWORD,
+  ...(process.env.REDIS_SSL === 'true' ? { tls: {} } : {})
 }
+
+// Log pour debug (optionnel mais utile)
+console.log(`🔧 BullMQ connecté à Redis: ${connectionOptions.host}:${connectionOptions.port}`)
 
 // ✅ Définition des queues
 export const importQueue = new Queue("import", { connection: connectionOptions })
