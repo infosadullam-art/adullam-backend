@@ -1,0 +1,10 @@
+// Export all workers - import this file to start all workers
+export { importWorker } from "./import.job"
+export { deduplicationWorker } from "./deduplication.job"
+export { fakeDetectionWorker } from "./fake-detection.job"
+export { cleanProductsWorker } from "./clean-products.job"
+export { forYouScoringWorker } from "./for-you-scoring.job"
+export { feedScoringWorker } from "./feed-scoring.job"
+export { adsIngestionWorker } from "./ads-ingestion.job"
+export { notificationDispatchWorker } from "./notification-dispatch.job"
+export { graphUpdateWorker } from "./graph-update.job"

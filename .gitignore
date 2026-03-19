@@ -1,0 +1,41 @@
+# Virtual Environment
+venv/
+env/
+ENV/
+venv.bak/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+*.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Project specific
+.DS_Store
+Thumbs.db
+*.db
+*.sqlite3"python-service/" 
+"raw/" 
+"scraper/" 
+"styles/" 

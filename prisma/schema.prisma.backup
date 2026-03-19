@@ -1,0 +1,787 @@
+generator client {
+  provider = "prisma-client-js"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// USER & AUTH
+// ============================================================
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  password      String
+  name          String?
+  phone         String?
+  role          UserRole       @default(USER)
+  refreshToken  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  feedScores    FeedScore[]
+  forYouScores  ForYouScore[]
+  interactions  Interaction[]
+  notifications Notification[]
+  orders        Order[]
+
+  @@index([email])
+  @@index([role])
+}
+
+// ============================================================
+// IMPORT & PIPELINE
+// ============================================================
+model ImportBatch {
+  id          String       @id @default(cuid())
+  source      ImportSource
+  status      ImportStatus @default(PENDING)
+  totalItems  Int          @default(0)
+  processed   Int          @default(0)
+  failed      Int          @default(0)
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  rawProducts RawProduct[]
+
+  @@index([status])
+  @@index([source])
+  @@index([createdAt])
+}
+
+model ApiUsageLog {
+  id        String       @id @default(cuid())
+  source    ImportSource
+  endpoint  String
+  calls     Int
+  date      DateTime
+  createdAt DateTime     @default(now())
+
+  @@unique([source, endpoint, date])
+  @@index([source])
+  @@index([endpoint])
+  @@index([date])
+}
+
+// ============================================================
+// RAW PRODUCTS (SOURCE OF TRUTH)
+// ============================================================
+model RawProduct {
+  id                String        @id @default(cuid())
+  importBatchId     String
+  sourceUrl         String?
+  rawTitle          String
+  rawDescription    String?
+  rawCurrency       String?
+  rawImages         String[]
+  rawCategory       String?
+  rawAttributes     Json?
+  status            ImportStatus  @default(PENDING)
+  errorMessage      String?
+  isDuplicate       Boolean       @default(false)
+  isFake            Boolean       @default(false)
+  duplicateOfId     String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  dataSourceType    String        @default("ALIEXPRESS_API")
+  externalProductId String?
+  externalShopId    String?
+  externalSkuId     String?
+  rawMaxPrice       Float?
+  rawMinPrice       Float?
+  source            ImportSource
+  supplierSku       String
+  weight            Float?        // POIDS du produit principal
+  cleanProduct      CleanProduct?
+  importBatch       ImportBatch   @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  variants          RawVariant[]  // Les variantes brutes
+
+  @@unique([source, supplierSku], name: "source_supplierSku")
+  @@unique([source, externalProductId])
+  @@index([externalProductId])
+  @@index([importBatchId])
+  @@index([isDuplicate])
+  @@index([isFake])
+  @@index([source])
+  @@index([status])
+}
+
+model RawVariant {
+  id            String     @id @default(cuid())
+  rawProductId  String
+  externalSkuId String
+  price         Float?
+  currency      String?
+  stock         Int?
+  weight        Float?      // POIDS de la variante
+  attributes    Json?       // Couleur, taille, etc.
+  image         String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  rawProduct    RawProduct @relation(fields: [rawProductId], references: [id], onDelete: Cascade)
+
+  @@unique([rawProductId, externalSkuId])
+  @@index([externalSkuId])
+}
+
+// ============================================================
+// CLEAN PRODUCTS (TRANSFORMED)
+// ============================================================
+model CleanProduct {
+  id                     String         @id @default(cuid())
+  rawProductId           String         @unique
+  cleanedTitle           String
+  cleanedDesc            String?
+  seoTitle               String?
+  seoDescription         String?
+  seoKeywords            String[]
+  cleanedImages          String[]
+  mockupImages           String[]
+  suggestedPrice         Float?
+  suggestedCat           String?
+  suggestedMarginPercent Float?
+  qualityScore           Float?
+  isApproved             Boolean        @default(false)
+  approvedAt             DateTime?
+  approvedBy             String?
+  weight                 Float?         // POIDS du produit nettoyé
+  // ✅ Version du transformer pour traçabilité
+  transformerVersion     String?        // ex: "2.0.0"
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  rawProduct             RawProduct     @relation(fields: [rawProductId], references: [id], onDelete: Cascade)
+  product                Product?
+  // ✅ Relations
+  variants               CleanVariant[] // Les variantes nettoyées
+  priceTiers             PriceTier[]    // Prix par quantité
+
+  @@index([isApproved])
+  @@index([qualityScore])
+}
+
+model CleanVariant {
+  id              String       @id @default(cuid())
+  cleanProductId  String
+  externalSkuId   String
+  name            String?      // Nom lisible (ex: "Noir - M")
+  // ✅ Type de variante pour aider le front
+  variantType     String?      // 'attribute', 'quantity', 'other'
+  price           Float?
+  currency        String?      @default("USD")
+  stock           Int?
+  weight          Float?       // POIDS de la variante
+  attributes      Json?        // Attributs bruts
+  image           String?
+  sortOrder       Int          @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  cleanProduct    CleanProduct @relation(fields: [cleanProductId], references: [id], onDelete: Cascade)
+
+  @@unique([cleanProductId, externalSkuId])
+  @@index([externalSkuId])
+}
+
+// ============================================================
+// FINAL PRODUCTS (LIVE ON SITE)
+// ============================================================
+model Product {
+  id               String         @id @default(cuid())
+  cleanProductId   String?        @unique
+  sku              String         @unique
+  title            String
+  slug             String         @unique
+  description      String?
+  seoTitle         String?
+  seoDescription   String?
+  seoKeywords      String[]
+  price            Float
+  currency         String         @default("USD")
+  images           String[]
+  mockupImages     String[]
+  categoryId       String?
+  tags             String[]
+  attributes       Json?
+  stock            Int            @default(0)
+  status           ProductStatus  @default(DRAFT)
+  featured         Boolean        @default(false)
+  viewCount        Int            @default(0)
+  purchaseCount    Int            @default(0)
+  avgRating        Float?
+  weight           Float          // POIDS du produit principal
+  grossProfitUSD   Float?
+  marginPercent    Float?
+  sellingPriceUSD  Float?
+  supplierPriceUSD Float?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  
+  // Relations
+  category         Category?      @relation(fields: [categoryId], references: [id])
+  cleanProduct     CleanProduct?  @relation(fields: [cleanProductId], references: [id])
+  variants         ProductVariant[] // Les variantes du produit final
+  priceTiers       PriceTier[]    // Prix par quantité
+  videos           ProductVideo[]
+  
+  // Relations fonctionnelles
+  adsEvents        AdsEvent[]
+  feedScores       FeedScore[]
+  forYouScores     ForYouScore[]
+  interactions     Interaction[]
+  orderItems       OrderItem[]
+
+  @@index([status])
+  @@index([categoryId])
+  @@index([featured])
+  @@index([slug])
+  @@index([sku])
+  @@index([price])
+  @@index([createdAt])
+  @@index([purchaseCount])
+  @@index([viewCount])
+}
+
+model ProductVariant {
+  id              String    @id @default(cuid())
+  productId       String
+  sku             String    @unique
+  name            String?   // Nom lisible (ex: "Noir - M")
+  // ✅ Type de variante pour aider le front
+  variantType     String?   // 'attribute', 'quantity', 'other'
+  price           Float
+  currency        String    @default("USD")
+  stock           Int       @default(0)
+  weight          Float?    // POIDS de la variante
+  attributes      Json?     // Attributs bruts
+  image           String?
+  sortOrder       Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  product         Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, sku])
+  @@index([productId])
+  @@index([sku])
+}
+
+// ✅ NOUVEAU: Prix par quantité (prix dégressifs)
+model PriceTier {
+  id              String       @id @default(cuid())
+  // Peut être lié à CleanProduct ou Product
+  cleanProductId  String?      // Si lié au produit nettoyé
+  productId       String?      // Si lié au produit final
+  minQuantity     Int          // Quantité minimum
+  maxQuantity     Int          // Quantité maximum (-1 pour "et plus")
+  price           Float        // Prix unitaire pour cette tranche
+  currency        String       @default("USD")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations (optionnelles)
+  cleanProduct    CleanProduct? @relation(fields: [cleanProductId], references: [id], onDelete: Cascade)
+  product         Product?      @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // Contrainte: un seul priceTier par produit/tranche
+  @@unique([cleanProductId, minQuantity, maxQuantity])
+  @@unique([productId, minQuantity, maxQuantity])
+  
+  // Index pour les recherches
+  @@index([cleanProductId])
+  @@index([productId])
+  @@index([minQuantity])
+}
+
+// ============================================================
+// CATEGORIES
+// ============================================================
+model RawCategory {
+  id                 String       @id @default(cuid())
+  importBatchId      String
+  source             ImportSource
+  externalCategoryId String       @unique
+  parentCategoryId   String?
+  name               String
+  level              Int?         @default(1)
+  path               String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+}
+
+model Category {
+  id          String     @id @default(cuid())
+  name        String
+  slug        String     @unique
+  description String?
+  image       String?
+  parentId    String?
+  sortOrder   Int        @default(0)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+  products    Product[]
+
+  @@index([parentId])
+  @@index([slug])
+}
+
+// ============================================================
+// MEDIA
+// ============================================================
+model ProductVideo {
+  id           String      @id @default(cuid())
+  productId    String
+  videoUrl     String
+  thumbnailUrl String?
+  duration     Int?
+  status       VideoStatus @default(PENDING)
+  viewCount    Int         @default(0)
+  likeCount    Int         @default(0)
+  shareCount   Int         @default(0)
+  sortOrder    Int         @default(0)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  product      Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@index([status])
+  @@index([viewCount])
+}
+
+// ============================================================
+// ORDERS
+// ============================================================
+model Order {
+  id                String               @id @default(cuid())
+  orderNumber       String               @unique
+  userId            String
+  status            OrderStatus          @default(PENDING)
+  paymentStatus     PaymentStatus        @default(PENDING)
+  paymentMethod     PaymentMethod?
+  subtotal          Float
+  shippingCost      Float                @default(0)
+  tax               Float                @default(0)
+  discount          Float                @default(0)
+  total             Float
+  currency          String               @default("XOF")
+  shippingAddress   Json?
+  billingAddress    Json?
+  notes             String?
+  trackingNumber    String?
+  estimatedDelivery DateTime?
+  deliveredAt       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  user              User                 @relation(fields: [userId], references: [id])
+  items             OrderItem[]
+  statusHistory     OrderStatusHistory[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([orderNumber])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id         String  @id @default(cuid())
+  orderId    String
+  productId  String
+  variantId  String? // Pour suivre quelle variante a été achetée
+  quantity   Int
+  unitPrice  Float
+  totalPrice Float
+  attributes Json?
+  order      Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product    Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([variantId])
+}
+
+model OrderStatusHistory {
+  id        String      @id @default(cuid())
+  orderId   String
+  status    OrderStatus
+  note      String?
+  changedBy String?
+  createdAt DateTime    @default(now())
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// INTERACTIONS & SCORING
+// ============================================================
+model Interaction {
+  id          String             @id @default(cuid())
+  userId      String
+  productId   String?
+  variantId   String?            // Pour tracker les interactions par variante
+  type        InteractionType
+  context     InteractionContext
+  sessionId   String?
+  deviceType  String?
+  referrer    String?
+  searchQuery String?
+  duration    Int?
+  country     String?            // 👈 CHAMP AJOUTÉ (corrige l'erreur)
+  metadata    Json?
+  createdAt   DateTime           @default(now())
+  product     Product?           @relation(fields: [productId], references: [id])
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([productId])
+  @@index([variantId])
+  @@index([type])
+  @@index([context])
+  @@index([country])              // 👈 INDEX AJOUTÉ
+  @@index([createdAt])
+  @@index([sessionId])
+}
+
+model ForYouScore {
+  id           String    @id @default(cuid())
+  userId       String
+  productId    String
+  variantId    String?   // Score par variante
+  score        Float
+  factors      Json?
+  version      Int       @default(1)
+  calculatedAt DateTime  @default(now())
+  expiresAt    DateTime?
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId, variantId, version])
+  @@index([userId])
+  @@index([productId])
+  @@index([score])
+  @@index([calculatedAt])
+}
+
+model FeedScore {
+  id           String    @id @default(cuid())
+  userId       String
+  productId    String
+  variantId    String?   // Score par variante
+  score        Float
+  engagement   Float?
+  factors      Json?
+  version      Int       @default(1)
+  calculatedAt DateTime  @default(now())
+  expiresAt    DateTime?
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId, variantId, version])
+  @@index([userId])
+  @@index([productId])
+  @@index([score])
+}
+
+// ============================================================
+// GRAPH (RECOMMENDATIONS)
+// ============================================================
+model GraphNode {
+  id         String      @id @default(cuid())
+  type       NodeType
+  entityId   String
+  properties Json?
+  embedding  Float[]
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  outEdges   GraphEdge[] @relation("FromNode")
+  inEdges    GraphEdge[] @relation("ToNode")
+
+  @@unique([type, entityId])
+  @@index([type])
+  @@index([entityId])
+}
+
+model GraphEdge {
+  id         String    @id @default(cuid())
+  fromNodeId String
+  toNodeId   String
+  type       EdgeType
+  weight     Float     @default(1)
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  fromNode   GraphNode @relation("FromNode", fields: [fromNodeId], references: [id], onDelete: Cascade)
+  toNode     GraphNode @relation("ToNode", fields: [toNodeId], references: [id], onDelete: Cascade)
+
+  @@unique([fromNodeId, toNodeId, type])
+  @@index([fromNodeId])
+  @@index([toNodeId])
+  @@index([type])
+  @@index([weight])
+}
+
+// ============================================================
+// ADVERTISING
+// ============================================================
+model AdsEvent {
+  id         String       @id @default(cuid())
+  platform   AdsPlatform
+  eventType  AdsEventType
+  productId  String?
+  variantId  String?      // Pour tracker les annonces par variante
+  campaignId String?
+  adSetId    String?
+  adId       String?
+  cost       Float?
+  revenue    Float?
+  currency   String?
+  deviceType String?
+  country    String?
+  metadata   Json?
+  occurredAt DateTime
+  createdAt  DateTime     @default(now())
+  product    Product?     @relation(fields: [productId], references: [id])
+
+  @@index([platform])
+  @@index([eventType])
+  @@index([productId])
+  @@index([variantId])
+  @@index([campaignId])
+  @@index([occurredAt])
+  @@index([createdAt])
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+model Notification {
+  id          String              @id @default(cuid())
+  userId      String
+  type        NotificationType
+  channel     NotificationChannel
+  status      NotificationStatus  @default(PENDING)
+  title       String
+  message     String
+  data        Json?
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  failReason  String?
+  retryCount  Int                 @default(0)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@index([channel])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================================
+// JOBS & SYSTEM
+// ============================================================
+model JobLog {
+  id           String    @id @default(cuid())
+  type         JobType
+  status       JobStatus @default(PENDING)
+  payload      Json?
+  result       Json?
+  errorMessage String?
+  progress     Int       @default(0)
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model SystemConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+enum ImportSource {
+  ALIBABA
+  ALIEXPRESS
+  DUBAI
+  TURKEY
+  USA
+  EUROPE
+  MANUAL
+}
+
+enum ImportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  OUT_OF_STOCK
+  ARCHIVED
+}
+
+enum VideoStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  MOBILE_MONEY
+  CARD
+  CASH_ON_DELIVERY
+  BANK_TRANSFER
+}
+
+enum InteractionType {
+  VIEW
+  CLICK
+  ADD_TO_CART
+  REMOVE_FROM_CART
+  WISHLIST_ADD
+  WISHLIST_REMOVE
+  PURCHASE
+  SHARE
+  VIDEO_VIEW
+  VIDEO_LIKE
+  VIDEO_COMPLETE
+  SEARCH
+}
+
+enum InteractionContext {
+  FEED
+  FOR_YOU
+  SEARCH
+  ADS
+  CATEGORY
+  PRODUCT_PAGE
+  CART
+  CHECKOUT
+}
+
+enum NodeType {
+  PRODUCT
+  USER
+  CATEGORY
+  TAG
+  BRAND
+  ATTRIBUTE
+  VARIANT
+}
+
+enum EdgeType {
+  VIEWED
+  PURCHASED
+  SIMILAR
+  RELATED
+  BELONGS_TO
+  HAS_TAG
+  CO_PURCHASED
+  HAS_VARIANT
+}
+
+enum AdsPlatform {
+  META
+  TIKTOK
+  GOOGLE
+}
+
+enum AdsEventType {
+  IMPRESSION
+  CLICK
+  CONVERSION
+  ADD_TO_CART
+  PURCHASE
+}
+
+enum NotificationChannel {
+  WHATSAPP
+  SMS
+  EMAIL
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  READ
+}
+
+enum NotificationType {
+  ORDER_CONFIRMATION
+  ORDER_SHIPPED
+  ORDER_DELIVERED
+  PROMOTION
+  PRICE_DROP
+  BACK_IN_STOCK
+  RECOMMENDATION
+  SYSTEM
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum JobType {
+  IMPORT_PRODUCTS
+  DEDUPLICATION
+  FAKE_DETECTION
+  CLEAN_PRODUCTS
+  FOR_YOU_SCORING
+  FEED_SCORING
+  ADS_INGESTION
+  NOTIFICATION_DISPATCH
+  GRAPH_UPDATE
+  ANALYTICS_AGGREGATE
+}

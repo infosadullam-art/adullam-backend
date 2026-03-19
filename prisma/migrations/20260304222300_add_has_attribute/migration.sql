@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "EdgeType" ADD VALUE 'HAS_ATTRIBUTE';
