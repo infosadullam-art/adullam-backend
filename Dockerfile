@@ -1,27 +1,25 @@
 FROM node:24-alpine
 WORKDIR /app
-
-# Installation des dépendances système
 RUN apk add --no-cache libc6-compat
 
-# Copie des fichiers de dépendances
+# Copier les fichiers de dépendances
 COPY package*.json ./
 COPY prisma ./prisma/
 
-# Installation des dépendances Node.js
+# Installer les dépendances
 RUN npm ci --only=production --legacy-peer-deps || npm install --legacy-peer-deps
 
-# Génération du client Prisma
+# Générer Prisma client
 RUN npx prisma generate
 
-# Copie du reste du code
+# Copier tout le reste du projet
 COPY . .
 
-# Build avec logs détaillés et sauvegarde
-RUN npm run build --verbose 2>&1 | tee build.log || (echo "=== BUILD FAILED ===" && cat build.log && exit 1)
+# Construire l'application
+RUN npm run build
 
-# Exposition du port
+# Exposer le port
 EXPOSE 3000
 
-# Démarrage
+# Démarrer l'application
 CMD ["npm", "start"]
