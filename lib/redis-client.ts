@@ -1,7 +1,7 @@
 import Redis from 'ioredis';
 
-// Détecte si on est en phase de build
-const isBuildPhase = process.env.NODE_ENV === 'production' && !process.env.REDIS_HOST;
+// Détecte si on est en phase de build (variable spéciale à ajouter sur Railway)
+const isBuildPhase = process.env.IS_BUILD_PHASE === 'true';
 
 class LazyRedis {
   private client: Redis | null = null;
@@ -21,13 +21,16 @@ class LazyRedis {
           // Pour Upstash (production)
           ...(process.env.REDIS_SSL === 'true' ? { tls: {} } : {}),
           retryStrategy: (times) => {
-            if (times > 3) return null;
-            return Math.min(times * 50, 2000);
-          },
+            if (times > 3) {
+              console.debug('⚠️ Redis: abandon après 3 tentatives');
+              return null;
+            }
+            return Math.min(times * 100, 3000);
+          }
         });
 
         this.client.on('error', (err) => {
-          console.debug('⚠️ Redis error:', err.message);
+          console.debug('⚠️ Redis erreur:', err.message);
         });
 
         this.client.on('connect', () => {
@@ -47,7 +50,7 @@ class LazyRedis {
     try {
       return await client.get(key);
     } catch (e) {
-      console.debug('⚠️ Redis get error:', e);
+      console.debug('⚠️ Redis get error:', e instanceof Error ? e.message : 'unknown error');
       return null;
     }
   }
@@ -59,7 +62,7 @@ class LazyRedis {
       await client.set(key, value, ...args);
       return true;
     } catch (e) {
-      console.debug('⚠️ Redis set error:', e);
+      console.debug('⚠️ Redis set error:', e instanceof Error ? e.message : 'unknown error');
       return false;
     }
   }
@@ -71,7 +74,7 @@ class LazyRedis {
       await client.setex(key, seconds, value);
       return true;
     } catch (e) {
-      console.debug('⚠️ Redis setex error:', e);
+      console.debug('⚠️ Redis setex error:', e instanceof Error ? e.message : 'unknown error');
       return false;
     }
   }
@@ -83,7 +86,7 @@ class LazyRedis {
       await client.del(...keys);
       return true;
     } catch (e) {
-      console.debug('⚠️ Redis del error:', e);
+      console.debug('⚠️ Redis del error:', e instanceof Error ? e.message : 'unknown error');
       return false;
     }
   }
@@ -94,8 +97,19 @@ class LazyRedis {
     try {
       return await client.keys(pattern);
     } catch (e) {
-      console.debug('⚠️ Redis keys error:', e);
+      console.debug('⚠️ Redis keys error:', e instanceof Error ? e.message : 'unknown error');
       return [];
+    }
+  }
+
+  async publish(channel: string, message: string): Promise<number> {
+    const client = this.getClient();
+    if (!client) return 0;
+    try {
+      return await client.publish(channel, message);
+    } catch (e) {
+      console.debug('⚠️ Redis publish error:', e instanceof Error ? e.message : 'unknown error');
+      return 0;
     }
   }
 }
