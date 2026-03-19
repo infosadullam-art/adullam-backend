@@ -9,8 +9,7 @@ COPY package*.json ./
 COPY prisma ./prisma/
 
 # Installation des dépendances Node.js
-RUN npm ci --only=production --legacy-peer-deps || \
-    npm install --legacy-peer-deps
+RUN npm ci --only=production --legacy-peer-deps || npm install --legacy-peer-deps
 
 # Génération du client Prisma
 RUN npx prisma generate
@@ -18,8 +17,8 @@ RUN npx prisma generate
 # Copie du reste du code
 COPY . .
 
-# Build de l'application
-RUN npm run build
+# Build avec logs détaillés
+RUN npm run build --verbose || (echo "=== BUILD FAILED ===" && cat /root/.npm/_logs/*-debug-0.log && exit 1)
 
 # Exposition du port
 EXPOSE 3000
